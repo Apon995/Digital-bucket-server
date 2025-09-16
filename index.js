@@ -10,7 +10,7 @@ const port = process.env.PORT || 5000;
 
 // ---middlewears----
 
-const uri = `mongodb+srv://${process.env.DB_OWER}:${process.env.DB_PASS}@digitalbucket.ozg7d0r.mongodb.net/?retryWrites=true&w=majority`;
+const uri = process.env.MONGO_URI 
 app.use(
   cors({
     // http://localhost:5173
