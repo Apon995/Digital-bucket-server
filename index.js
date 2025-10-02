@@ -10,11 +10,14 @@ const port = process.env.PORT || 5000;
 
 // ---middlewears----
 
-const uri = process.env.MONGO_URI 
+const uri = process.env.MONGO_URI;
 app.use(
   cors({
-    // http://localhost:5173
-    origin: "http://localhost:5173",
+    // origin : " http://localhost:5173",
+    origin: [
+      "https://digital-bucket-frontend.vercel.app",
+      "http://localhost:5173",
+    ],
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
     credentials: true,
   })
@@ -61,12 +64,13 @@ async function run() {
       const user = req.body;
 
       const token = jwt.sign(user, process.env.ACCESS_TOKEN, {
-        expiresIn: "24h",
+        expiresIn: "3d",
       });
 
       res.cookie("Token", token, {
         httpOnly: true,
-        secure: false,
+        secure: true,
+        sameSite: "none",
       });
       res.send({ success: true });
     });
@@ -85,27 +89,65 @@ async function run() {
         _id: new ObjectId(),
         user: obj.user,
         BoardName: obj.BoardName,
-        Columns: [
-          {
-            id: 1,
-            columnName: obj.firstColumn,
-            Task: [],
-          },
-          {
-            id: 2,
-            columnName: obj.secondColumn,
-            Task: [],
-          },
-          {
-            id: 3,
-            columnName: obj.thirdColumn,
-            Task: [],
-          },
-        ],
+        Columns: obj.Columns,
       };
 
       const result = await Tododb.insertOne(insertobj);
       res.send(result);
+    });
+
+    // ----Delete Column----
+    app.delete("/DeleteColumn", async (req, res) => {
+      const boardId = req?.query.ID;
+      const columnId = parseInt(req.query.columnId);
+
+      if (!isValidObjectId(boardId)) {
+        return res.status(400).send({ message: "Invalid ObjectId" });
+      }
+
+      try {
+        const result = await Tododb.updateOne(
+          { _id: new ObjectId(boardId) },
+          {
+            $pull: { Columns: { id: columnId } },
+          }
+        );
+
+        res.send(result);
+      } catch (err) {
+        res
+          .status(500)
+          .send({ message: "Failed to delete column", error: err });
+      }
+    });
+
+    // ----Add Column----
+    app.put("/AddColumn", async (req, res) => {
+      const boardId = req.query.ID;
+      if (!isValidObjectId(boardId)) {
+        return res.status(400).send({ message: "Invalid ObjectId" });
+      }
+
+      const { id, columnName } = req.body; 
+
+      try {
+        const result = await Tododb.updateOne(
+          { _id: new ObjectId(boardId) },
+          {
+            $push: {
+              Columns: {
+                id: id,
+                columnName: columnName || "",
+                Task: [],
+              },
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to add column", error: err });
+      }
     });
 
     // -----Add-new--Task---
@@ -233,27 +275,55 @@ async function run() {
     });
 
     //  ----Edit-Board---
+
     app.put("/UpdateBoard", async (req, res) => {
-      const Id = req?.query?.ID;
-      if (!isValidObjectId(Id)) {
-        return res.status(400).send({ message: "Invalid ObjectId" });
-      }
-      const find = { _id: new ObjectId(Id) };
-      const { BoardName, Columns } = req?.body;
-
-      let updateObj = {};
-
-      updateObj["$set"] = { BoardName: BoardName };
-
-      Columns?.forEach((element) => {
-        if (element.columnName) {
-          updateObj["$set"] = updateObj["$set"] || {};
-          updateObj["$set"][`Columns.${element.id - 1}.columnName`] =
-            element.columnName;
+      try {
+        const Id = req?.query?.ID;
+        if (!isValidObjectId(Id)) {
+          return res.status(400).send({ message: "Invalid ObjectId" });
         }
-      });
-      const result = await Tododb.updateOne(find, updateObj);
-      res.send(result);
+
+        const find = { _id: new ObjectId(Id) };
+        const { BoardName, Columns } = req?.body;
+
+       
+        const board = await Tododb.findOne(find);
+        if (!board) {
+          return res.status(404).send({ message: "Board not found" });
+        }
+
+     
+        let updateObj = {
+          $set: { BoardName: BoardName },
+        };
+
+        let existingColumns = board.Columns || [];
+
+        
+        let updatedColumns = Columns.map((col) => {
+          const existing = existingColumns.find((c) => c.id === col.id);
+          if (existing) {
+  
+            return { ...existing, columnName: col.columnName };
+          } else {
+          
+            return { id: col.id, columnName: col.columnName, Task : [] };
+          }
+        });
+
+        updatedColumns = updatedColumns.filter((c) =>
+          Columns.some((col) => col.id === c.id)
+        );
+
+        updateObj["$set"].Columns = updatedColumns;
+
+        const result = await Tododb.updateOne(find, updateObj);
+        
+        res.send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
     });
 
     //  -----Edit-Task---code--
@@ -262,42 +332,39 @@ async function run() {
       if (!isValidObjectId(Id)) {
         return res.status(400).send({ message: "Invalid ObjectId" });
       }
-      const currentTitle = req?.query?.title;
       const columnId = parseInt(req?.query?.columnId);
       const TaskId = req?.query?.TaskId;
       const { title, description, status } = req?.body;
 
-      if (currentTitle != title) {
-        const result = await Tododb.updateOne(
-          {
-            _id: new ObjectId(Id),
-            Columns: {
-              $elemMatch: {
-                id: columnId,
-                Task: {
-                  $elemMatch: {
-                    _id: new ObjectId(TaskId),
-                  },
+      const result = await Tododb.updateOne(
+        {
+          _id: new ObjectId(Id),
+          Columns: {
+            $elemMatch: {
+              id: columnId,
+              Task: {
+                $elemMatch: {
+                  _id: new ObjectId(TaskId),
                 },
               },
             },
           },
-          {
-            $set: {
-              "Columns.$[col].Task.$[task].title": title,
-              "Columns.$[col].Task.$[task].description": description,
-              "Columns.$[col].Task.$[task].status": status,
-            },
+        },
+        {
+          $set: {
+            "Columns.$[col].Task.$[task].title": title,
+            "Columns.$[col].Task.$[task].description": description,
+            "Columns.$[col].Task.$[task].status": status,
           },
-          {
-            arrayFilters: [
-              { "col.id": columnId },
-              { "task._id": new ObjectId(TaskId) },
-            ],
-          }
-        );
-        res.send(result);
-      }
+        },
+        {
+          arrayFilters: [
+            { "col.id": columnId },
+            { "task._id": new ObjectId(TaskId) },
+          ],
+        }
+      );
+      res.send(result);
     });
 
     // ----Edit-Task-status----
