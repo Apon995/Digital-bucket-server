@@ -15,7 +15,7 @@ app.use(
   cors({
     // origin : " http://localhost:5173",
     origin: [
-      "https://digital-bucket-frontend.vercel.app",
+      "https://digital-bucket.vercel.app",
       "http://localhost:5173",
     ],
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
